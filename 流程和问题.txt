@@ -1,0 +1,146 @@
+HOG + SVM实现门窗开闭检测(二分类)
+1.正(门开)、负(门关)样本若干
+2.将正负样本图片的路径全都保存到一个vector里面，并在另一个vector里存放他们对面的tag
+3.训练分类器，最终得到.xml文件
+
+4.对于输入图片进行特征提取
+5.放到分类器里面预测
+---------------重点一定要突出-----------------
+---------------重点一定要突出-----------------
+HOGDescriptor *hog = new HOGDescriptor(cvSize(ImgWidht, ImgHeight), cvSize(128, 128), cvSize(32, 32), cvSize(32, 32), 9);  
+构造函数原型：CV_WRAP HOGDescriptor(Size _winSize, Size _blockSize, Size _blockStride,Size _cellSize, int _nbins, 
+			  int _derivAperture=1, double _winSigma=-1,  
+              int _histogramNormType=HOGDescriptor::L2Hys,  
+              double _L2HysThreshold=0.2, bool _gammaCorrection=false,  
+              int _nlevels=HOGDescriptor::DEFAULT_NLEVELS);
+			  
+这个东西就是HOG特征的描述子，下面解释一下每个参数的意思:
+一般来说只有前5个参数需要设置，后面的参数均使用默认参数就好。
+第一个参数winSize,一般设为你统一标准后的图像大小，在我下面的代码中就是256*256
+第二个参数blockSize，为块大小，即在winSize的基础上在细分区域，在末端不够一块的部分，直接舍去
+第三个参数blockStride，为步长，即在每个winSize中，处理完一个blockSize后，前进的步长
+第四个参数cellSize，将blockSize在划分处理，
+第五个参数bin，对与每个cell，可以将向量划分为bin个区间，如bin=9，即划分为9个区间，每个区间20°
+这样可以将输入的图片用一个向量描述，这个向量的维数
+dim = nbins*(blockSize.width/cellSize.width)*  
+            (blockSize.height/cellSize.height)*  
+            ((winSize.width - blockSize.width)/blockStride.width + 1)*  
+            ((winSize.height - blockSize.height)/blockStride.height + 1); 
+所以下面的代码中 dim = 3600;
+
+参考于http://blog.csdn.net/raodotcong/article/details/6239431
+---------------重点一定要突出-----------------
+---------------重点一定要突出-----------------
+运行环境：VS2010 + opencv 2.4.9
+#include "cv.h"
+#include "highgui.h"
+#include <ml.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+using namespace cv;
+using namespace std;
+//#define TRAIN
+#define PREDICT
+int main(int argc, char** argv)
+{
+	const int ImgWidht = 256;//图片大小，也即HOGDescriptor构造函数的第一个参数的大小，即winsize
+	const int ImgHeight = 256;//
+	string buf;
+	Mat trainImg = Mat::zeros(ImgHeight, ImgWidht, CV_8UC3);//需要分析的图片
+	unsigned long n;
+	
+#ifdef TRAIN
+	vector<string> img_path;
+	vector<int> img_catg;
+	int nLine = 0;
+	
+	ifstream svm_data("D:/saofeng/store/HOG/HOG/1.txt");//正负样本图片路径全都保存在这个文档中，且正样本在前numPos行，负样本在后面的行
+	const int numPos = 31;
+	while (svm_data)//将图片和对应的tag读到vector里面
+	{
+		if (getline(svm_data, buf))
+		{
+			nLine++;
+			if (nLine < numPos)
+			{
+				img_catg.push_back(1);
+				img_path.push_back(buf);//图像路径
+			}
+			else
+			{
+				img_catg.push_back(0);
+				img_path.push_back(buf);//图像路径
+			}
+		}
+	}
+	svm_data.close();//关闭文件
+	Mat data_mat, res_mat;
+	int nImgNum = nLine;            //读入样本数量
+	res_mat = Mat::zeros(nImgNum, 1, CV_32FC1);
+
+	Mat src;
+	for (string::size_type i = 0; i != img_path.size(); i++)
+	{
+		src = imread(img_path[i].c_str(), 1);
+		std:: cout << " processing " << img_path[i].c_str() << endl;
+		resize(src, trainImg, cv::Size(ImgWidht, ImgHeight), 0, 0, INTER_CUBIC);
+		imshow("trainImg", trainImg);
+		waitKey(10);
+		HOGDescriptor *hog = new HOGDescriptor(cvSize(ImgWidht, ImgHeight), cvSize(128, 128), cvSize(32, 32), cvSize(32, 32), 9);  
+		vector<float> descriptors;//结果数组
+		hog->compute(trainImg, descriptors, Size(1, 1), Size(0, 0)); //调用计算函数开始计算
+		if (i == 0)
+		{
+			data_mat = Mat::zeros(nImgNum, descriptors.size(), CV_32FC1); //根据输入图片大小进行分配空间
+		}
+		cout << "HOG dims: " << descriptors.size() << endl;
+		n = 0;
+		for (vector<float>::iterator iter = descriptors.begin(); iter != descriptors.end(); iter++)
+		{
+			data_mat.at<float>(i, n) = *iter;
+			n++;
+		}
+		res_mat.at<float>(i, 0) = img_catg[i];
+		cout << " end processing " << img_path[i].c_str() << " " << img_catg[i] << endl;
+	}
+	CvSVM svm;
+	CvSVMParams param;
+	CvTermCriteria criteria;
+	criteria = cvTermCriteria(CV_TERMCRIT_EPS, 1000, FLT_EPSILON);
+	param = CvSVMParams(CvSVM::C_SVC, CvSVM::LINEAR, 10.0, 0.09, 1.0, 10.0, 0.5, 1.0, NULL, criteria);//使用线性核LINEAR，不要使用RBF核
+	svm.train(data_mat, res_mat, Mat(), Mat(), param);
+	svm.save("SVM_DATA.xml");//最终训练好的分类器
+#endif
+	//检测样本
+#ifdef PREDICT
+	CvSVM svm;
+	svm.load("SVM_DATA.xml");//加载上面训练好的分类器
+	Mat test;
+	VideoCapture cap("E:\\p彭树风\\教研室工作\\粮仓项目\\顺义剪切视频\\门窗.avi");
+	cap >> test;
+	while (!test.empty())
+	{
+		imshow("test", test);
+		waitKey(10);
+		resize(test, trainImg, cv::Size(ImgWidht, ImgHeight), 0, 0, INTER_CUBIC);//要搞成同样的大小才可以检测到
+		HOGDescriptor *hog = new HOGDescriptor(cvSize(ImgWidht, ImgHeight), cvSize(128, 128), cvSize(32, 32), cvSize(32, 32), 9); 
+		vector<float> descriptors;//结果数组，提取输入图片的特征
+		hog->compute(trainImg, descriptors, Size(1, 1), Size(0, 0)); //调用计算函数开始计算
+		std::cout << "The Detection Result:" << endl;
+		std::cout << "HOG dims: " << descriptors.size();
+		Mat SVMtrainMat = Mat::zeros(1, descriptors.size(), CV_32FC1);//存放图片特征的矩阵
+		n = 0;
+		for (vector<float>::iterator iter = descriptors.begin(); iter != descriptors.end(); iter++)
+		{
+			SVMtrainMat.at<float>(0, n) = *iter;
+			n++;
+		}
+		int ret = svm.predict(SVMtrainMat);
+		std::cout << ",ret = "<< ret << endl;
+		cap >> test;
+	}
+#endif
+	return 0;
+}
